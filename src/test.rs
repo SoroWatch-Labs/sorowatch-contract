@@ -1,0 +1,137 @@
+#![cfg(test)]
+use super::*;
+use soroban_sdk::testutils::Address as _;
+
+fn setup(env: &Env) -> (Address, Address) {
+    let contract_id = env.register(SoroWatch, ());
+    let admin = Address::generate(env);
+    (contract_id, admin)
+}
+
+#[test]
+fn test_initialize_and_threshold() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, admin) = setup(&env);
+    let client = SoroWatchClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &75);
+    assert_eq!(client.get_threshold(), 75);
+}
+
+#[test]
+#[should_panic(expected = "already initialized")]
+fn test_double_initialize_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, admin) = setup(&env);
+    let client = SoroWatchClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &75);
+    client.initialize(&admin, &90);
+}
+
+#[test]
+fn test_responder_can_flag() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, admin) = setup(&env);
+    let client = SoroWatchClient::new(&env, &contract_id);
+    client.initialize(&admin, &50);
+
+    let agent = Address::generate(&env);
+    let subject = Address::generate(&env);
+    client.authorize_agent(&admin, &agent, &Role::Responder);
+
+    client.flag_anomaly(&agent, &subject, &80);
+
+    let flags = client.get_flags(&subject);
+    assert_eq!(flags.len(), 1);
+    assert_eq!(flags.get(0).unwrap().score, 80);
+}
+
+#[test]
+#[should_panic(expected = "caller is not an authorized responder")]
+fn test_monitor_cannot_flag() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, admin) = setup(&env);
+    let client = SoroWatchClient::new(&env, &contract_id);
+    client.initialize(&admin, &50);
+
+    let agent = Address::generate(&env);
+    let subject = Address::generate(&env);
+    client.authorize_agent(&admin, &agent, &Role::Monitor);
+
+    // Monitors are not allowed to flag — this must panic.
+    client.flag_anomaly(&agent, &subject, &80);
+}
+
+#[test]
+#[should_panic(expected = "caller is not an authorized responder")]
+fn test_unauthorized_address_cannot_flag() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, admin) = setup(&env);
+    let client = SoroWatchClient::new(&env, &contract_id);
+    client.initialize(&admin, &50);
+
+    let stranger = Address::generate(&env);
+    let subject = Address::generate(&env);
+
+    client.flag_anomaly(&stranger, &subject, &80);
+}
+
+#[test]
+fn test_multiple_flags_for_same_subject() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, admin) = setup(&env);
+    let client = SoroWatchClient::new(&env, &contract_id);
+    client.initialize(&admin, &50);
+
+    let agent = Address::generate(&env);
+    let subject = Address::generate(&env);
+    client.authorize_agent(&admin, &agent, &Role::Responder);
+
+    client.flag_anomaly(&agent, &subject, &60);
+    client.flag_anomaly(&agent, &subject, &70);
+    client.flag_anomaly(&agent, &subject, &95);
+
+    let flags = client.get_flags(&subject);
+    assert_eq!(flags.len(), 3);
+    assert_eq!(flags.get(2).unwrap().score, 95);
+}
+
+#[test]
+fn test_flag_history_caps_and_drops_oldest() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, admin) = setup(&env);
+    let client = SoroWatchClient::new(&env, &contract_id);
+    client.initialize(&admin, &50);
+
+    let agent = Address::generate(&env);
+    let subject = Address::generate(&env);
+    client.authorize_agent(&admin, &agent, &Role::Responder);
+
+    for i in 0..(MAX_FLAGS_PER_SUBJECT + 5) {
+        client.flag_anomaly(&agent, &subject, &(i as u32));
+    }
+
+    let flags = client.get_flags(&subject);
+    assert_eq!(flags.len(), MAX_FLAGS_PER_SUBJECT);
+    // Oldest entries (score 0-4) should have been dropped.
+    assert_eq!(flags.get(0).unwrap().score, 5);
+}
+
+#[test]
+fn test_get_role_returns_none_for_unknown_address() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, _admin) = setup(&env);
+    let client = SoroWatchClient::new(&env, &contract_id);
+
+    let stranger = Address::generate(&env);
+    assert_eq!(client.get_role(&stranger), None);
+}
