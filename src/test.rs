@@ -116,7 +116,7 @@ fn test_flag_history_caps_and_drops_oldest() {
     client.authorize_agent(&admin, &agent, &Role::Responder);
 
     for i in 0..(MAX_FLAGS_PER_SUBJECT + 5) {
-        client.flag_anomaly(&agent, &subject, &(i as u32));
+        client.flag_anomaly(&agent, &subject, &i);
     }
 
     let flags = client.get_flags(&subject);
