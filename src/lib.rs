@@ -59,6 +59,26 @@ impl SoroWatch {
         env.storage().instance().set(&DataKey::Agent(agent), &role);
     }
 
+    /// Admin-only: remove an agent's role so it can no longer flag anomalies.
+    /// Panics if the agent has no role.
+    pub fn revoke_agent(env: Env, admin: Address, agent: Address) {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        if stored_admin != admin {
+            panic!("unauthorized");
+        }
+        let key = DataKey::Agent(agent.clone());
+        if !env.storage().instance().has(&key) {
+            panic!("agent not found");
+        }
+        env.storage().instance().remove(&key);
+        env.events().publish((symbol_short!("revoked"), agent), ());
+    }
+
     pub fn get_role(env: Env, agent: Address) -> Option<Role> {
         env.storage().instance().get(&DataKey::Agent(agent))
     }
@@ -68,10 +88,7 @@ impl SoroWatch {
     /// and emits an event for off-chain services to consume.
     pub fn flag_anomaly(env: Env, agent: Address, subject: Address, score: u32) {
         agent.require_auth();
-        let role: Option<Role> = env
-            .storage()
-            .instance()
-            .get(&DataKey::Agent(agent.clone()));
+        let role: Option<Role> = env.storage().instance().get(&DataKey::Agent(agent.clone()));
         match role {
             Some(Role::Responder) => {}
             _ => panic!("caller is not an authorized responder"),
