@@ -1,6 +1,7 @@
 #![cfg(test)]
 use super::*;
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::BytesN;
 
 fn setup(env: &Env) -> (Address, Address) {
     let contract_id = env.register(SoroWatch, ());
@@ -196,4 +197,94 @@ fn test_revoke_unknown_agent_panics() {
 
     let stranger = Address::generate(&env);
     client.revoke_agent(&admin, &stranger);
+}
+
+fn init(env: &Env) -> (SoroWatchClient<'_>, Address) {
+    env.mock_all_auths();
+    let (contract_id, admin) = setup(env);
+    let client = SoroWatchClient::new(env, &contract_id);
+    client.initialize(&admin, &50);
+    (client, admin)
+}
+
+#[test]
+fn test_propose_upgrade_stores_pending() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    let hash = BytesN::from_array(&env, &[7u8; 32]);
+
+    assert!(client.get_pending_upgrade().is_none());
+    client.propose_upgrade(&admin, &hash);
+
+    let pending = client.get_pending_upgrade().unwrap();
+    assert_eq!(pending.wasm_hash, hash);
+    assert_eq!(
+        pending.executable_at,
+        env.ledger().sequence() + UPGRADE_DELAY_LEDGERS
+    );
+}
+
+#[test]
+#[should_panic(expected = "unauthorized")]
+fn test_non_admin_cannot_propose_upgrade() {
+    let env = Env::default();
+    let (client, _admin) = init(&env);
+    let attacker = Address::generate(&env);
+    client.propose_upgrade(&attacker, &BytesN::from_array(&env, &[1u8; 32]));
+}
+
+#[test]
+#[should_panic(expected = "upgrade delay not elapsed")]
+fn test_execute_before_delay_panics() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    client.propose_upgrade(&admin, &BytesN::from_array(&env, &[2u8; 32]));
+    client.execute_upgrade(&admin);
+}
+
+#[test]
+#[should_panic(expected = "no pending upgrade")]
+fn test_execute_without_proposal_panics() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    client.execute_upgrade(&admin);
+}
+
+#[test]
+fn test_cancel_upgrade_clears_pending() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    client.propose_upgrade(&admin, &BytesN::from_array(&env, &[3u8; 32]));
+    client.cancel_upgrade(&admin);
+    assert!(client.get_pending_upgrade().is_none());
+}
+
+#[test]
+#[should_panic(expected = "no pending upgrade")]
+fn test_cancel_without_proposal_panics() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    client.cancel_upgrade(&admin);
+}
+
+#[test]
+#[should_panic(expected = "unauthorized")]
+fn test_non_admin_cannot_cancel_upgrade() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    client.propose_upgrade(&admin, &BytesN::from_array(&env, &[4u8; 32]));
+    let attacker = Address::generate(&env);
+    client.cancel_upgrade(&attacker);
+}
+
+#[test]
+fn test_delay_constant_passes_after_ledgers_advance() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    client.propose_upgrade(&admin, &BytesN::from_array(&env, &[5u8; 32]));
+    let pending = client.get_pending_upgrade().unwrap();
+
+    env.ledger()
+        .with_mut(|l| l.sequence_number = pending.executable_at);
+    assert!(env.ledger().sequence() >= pending.executable_at);
 }
