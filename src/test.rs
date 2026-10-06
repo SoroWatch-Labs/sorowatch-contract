@@ -135,3 +135,65 @@ fn test_get_role_returns_none_for_unknown_address() {
     let stranger = Address::generate(&env);
     assert_eq!(client.get_role(&stranger), None);
 }
+
+#[test]
+fn test_revoke_agent_removes_role() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, admin) = setup(&env);
+    let client = SoroWatchClient::new(&env, &contract_id);
+    client.initialize(&admin, &50);
+
+    let agent = Address::generate(&env);
+    client.authorize_agent(&admin, &agent, &Role::Responder);
+    assert_eq!(client.get_role(&agent), Some(Role::Responder));
+
+    client.revoke_agent(&admin, &agent);
+    assert_eq!(client.get_role(&agent), None);
+}
+
+#[test]
+#[should_panic(expected = "caller is not an authorized responder")]
+fn test_revoked_agent_cannot_flag() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, admin) = setup(&env);
+    let client = SoroWatchClient::new(&env, &contract_id);
+    client.initialize(&admin, &50);
+
+    let agent = Address::generate(&env);
+    let subject = Address::generate(&env);
+    client.authorize_agent(&admin, &agent, &Role::Responder);
+    client.revoke_agent(&admin, &agent);
+
+    client.flag_anomaly(&agent, &subject, &80);
+}
+
+#[test]
+#[should_panic(expected = "unauthorized")]
+fn test_non_admin_cannot_revoke() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, admin) = setup(&env);
+    let client = SoroWatchClient::new(&env, &contract_id);
+    client.initialize(&admin, &50);
+
+    let agent = Address::generate(&env);
+    let attacker = Address::generate(&env);
+    client.authorize_agent(&admin, &agent, &Role::Responder);
+
+    client.revoke_agent(&attacker, &agent);
+}
+
+#[test]
+#[should_panic(expected = "agent not found")]
+fn test_revoke_unknown_agent_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (contract_id, admin) = setup(&env);
+    let client = SoroWatchClient::new(&env, &contract_id);
+    client.initialize(&admin, &50);
+
+    let stranger = Address::generate(&env);
+    client.revoke_agent(&admin, &stranger);
+}
