@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, BytesN, Env, Symbol, Vec,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[contracttype]
@@ -16,16 +18,26 @@ pub struct Flag {
     pub ledger: u32,
 }
 
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct PendingUpgrade {
+    pub wasm_hash: BytesN<32>,
+    pub executable_at: u32,
+}
+
 #[contracttype]
 pub enum DataKey {
     Admin,
     Agent(Address),
     RiskThreshold,
     Flags(Address),
+    PendingUpgrade,
 }
 
 const FLAG_EVENT: Symbol = symbol_short!("flagged");
 const MAX_FLAGS_PER_SUBJECT: u32 = 50;
+/// Ledgers that must pass between proposing and executing an upgrade (~1 day).
+pub const UPGRADE_DELAY_LEDGERS: u32 = 17_280;
 
 #[contract]
 pub struct SoroWatch;
@@ -79,6 +91,51 @@ impl SoroWatch {
         env.events().publish((symbol_short!("revoked"), agent), ());
     }
 
+    /// Admin-only: propose a new contract WASM. It can only be executed after
+    /// UPGRADE_DELAY_LEDGERS have passed, giving users time to react.
+    pub fn propose_upgrade(env: Env, admin: Address, wasm_hash: BytesN<32>) {
+        Self::require_admin(&env, &admin);
+        let pending = PendingUpgrade {
+            wasm_hash,
+            executable_at: env.ledger().sequence() + UPGRADE_DELAY_LEDGERS,
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingUpgrade, &pending);
+        env.events()
+            .publish((symbol_short!("upg_prop"),), pending.executable_at);
+    }
+
+    /// Admin-only: cancel a pending upgrade.
+    pub fn cancel_upgrade(env: Env, admin: Address) {
+        Self::require_admin(&env, &admin);
+        if !env.storage().instance().has(&DataKey::PendingUpgrade) {
+            panic!("no pending upgrade");
+        }
+        env.storage().instance().remove(&DataKey::PendingUpgrade);
+        env.events().publish((symbol_short!("upg_canc"),), ());
+    }
+
+    /// Admin-only: apply the pending upgrade once the delay has passed.
+    pub fn execute_upgrade(env: Env, admin: Address) {
+        Self::require_admin(&env, &admin);
+        let pending: PendingUpgrade = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingUpgrade)
+            .expect("no pending upgrade");
+        if env.ledger().sequence() < pending.executable_at {
+            panic!("upgrade delay not elapsed");
+        }
+        env.storage().instance().remove(&DataKey::PendingUpgrade);
+        env.deployer()
+            .update_current_contract_wasm(pending.wasm_hash);
+    }
+
+    pub fn get_pending_upgrade(env: Env) -> Option<PendingUpgrade> {
+        env.storage().instance().get(&DataKey::PendingUpgrade)
+    }
+
     pub fn get_role(env: Env, agent: Address) -> Option<Role> {
         env.storage().instance().get(&DataKey::Agent(agent))
     }
@@ -128,6 +185,20 @@ impl SoroWatch {
             .instance()
             .get(&DataKey::RiskThreshold)
             .unwrap_or(0)
+    }
+}
+
+impl SoroWatch {
+    fn require_admin(env: &Env, admin: &Address) {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        if stored_admin != *admin {
+            panic!("unauthorized");
+        }
     }
 }
 
