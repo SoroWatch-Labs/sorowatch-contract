@@ -32,6 +32,7 @@ pub enum DataKey {
     RiskThreshold,
     Flags(Address),
     PendingUpgrade,
+    Paused,
 }
 
 const FLAG_EVENT: Symbol = symbol_short!("flagged");
@@ -132,6 +133,28 @@ impl SoroWatch {
             .update_current_contract_wasm(pending.wasm_hash);
     }
 
+    /// Admin-only: pause flagging, e.g. while investigating a faulty agent.
+    /// Reads and admin actions keep working while paused.
+    pub fn pause(env: Env, admin: Address) {
+        Self::require_admin(&env, &admin);
+        env.storage().instance().set(&DataKey::Paused, &true);
+        env.events().publish((symbol_short!("paused"),), ());
+    }
+
+    /// Admin-only: resume flagging after a pause.
+    pub fn unpause(env: Env, admin: Address) {
+        Self::require_admin(&env, &admin);
+        env.storage().instance().remove(&DataKey::Paused);
+        env.events().publish((symbol_short!("unpaused"),), ());
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
     pub fn get_pending_upgrade(env: Env) -> Option<PendingUpgrade> {
         env.storage().instance().get(&DataKey::PendingUpgrade)
     }
@@ -145,6 +168,9 @@ impl SoroWatch {
     /// and emits an event for off-chain services to consume.
     pub fn flag_anomaly(env: Env, agent: Address, subject: Address, score: u32) {
         agent.require_auth();
+        if Self::is_paused(env.clone()) {
+            panic!("contract is paused");
+        }
         let role: Option<Role> = env.storage().instance().get(&DataKey::Agent(agent.clone()));
         match role {
             Some(Role::Responder) => {}

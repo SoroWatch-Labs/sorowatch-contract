@@ -288,3 +288,68 @@ fn test_delay_constant_passes_after_ledgers_advance() {
         .with_mut(|l| l.sequence_number = pending.executable_at);
     assert!(env.ledger().sequence() >= pending.executable_at);
 }
+
+fn init_with_responder(env: &Env) -> (SoroWatchClient<'_>, Address, Address) {
+    let (client, admin) = init(env);
+    let agent = Address::generate(env);
+    client.authorize_agent(&admin, &agent, &Role::Responder);
+    (client, admin, agent)
+}
+
+#[test]
+fn test_not_paused_by_default() {
+    let env = Env::default();
+    let (client, _admin) = init(&env);
+    assert!(!client.is_paused());
+}
+
+#[test]
+#[should_panic(expected = "contract is paused")]
+fn test_flagging_blocked_while_paused() {
+    let env = Env::default();
+    let (client, admin, agent) = init_with_responder(&env);
+    let subject = Address::generate(&env);
+    client.pause(&admin);
+    assert!(client.is_paused());
+    client.flag_anomaly(&agent, &subject, &90);
+}
+
+#[test]
+fn test_unpause_restores_flagging() {
+    let env = Env::default();
+    let (client, admin, agent) = init_with_responder(&env);
+    let subject = Address::generate(&env);
+    client.pause(&admin);
+    client.unpause(&admin);
+    assert!(!client.is_paused());
+    client.flag_anomaly(&agent, &subject, &90);
+    assert_eq!(client.get_flags(&subject).len(), 1);
+}
+
+#[test]
+#[should_panic(expected = "unauthorized")]
+fn test_non_admin_cannot_pause() {
+    let env = Env::default();
+    let (client, _admin) = init(&env);
+    let attacker = Address::generate(&env);
+    client.pause(&attacker);
+}
+
+#[test]
+#[should_panic(expected = "unauthorized")]
+fn test_non_admin_cannot_unpause() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    client.pause(&admin);
+    let attacker = Address::generate(&env);
+    client.unpause(&attacker);
+}
+
+#[test]
+fn test_admin_actions_still_work_while_paused() {
+    let env = Env::default();
+    let (client, admin, agent) = init_with_responder(&env);
+    client.pause(&admin);
+    client.revoke_agent(&admin, &agent);
+    assert!(client.get_role(&agent).is_none());
+}
