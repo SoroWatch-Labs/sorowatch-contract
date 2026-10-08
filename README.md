@@ -6,18 +6,26 @@ role-based agent authorization and persistent flag history.
 ## What's implemented
 - `initialize(admin, default_threshold)` — one-time setup
 - `authorize_agent(admin, agent, role)` — assigns Monitor or Responder role
+- `revoke_agent(admin, agent)` — removes an agent's role and emits `revoked`
 - `get_role(agent)` — reads an agent's assigned role
 - `flag_anomaly(agent, subject, score)` — Responder-only; persists the flag
   (capped at 50 per subject, oldest dropped) and emits a `flagged` event
 - `get_flags(subject)` — returns the persisted flag history for an address
 - `get_threshold()` — reads the configured risk threshold
+- `pause(admin)` / `unpause(admin)` — admin-only switch that blocks
+  `flag_anomaly` while paused (emits `paused` / `unpaused`); reads and admin
+  actions keep working. `is_paused()` reads the current state
+- `propose_upgrade` / `cancel_upgrade` / `execute_upgrade` — admin-only
+  upgrade path with a 17,280-ledger (about 1 day) delay between proposing and
+  executing; `get_pending_upgrade()` shows what is queued
 
 ## Test coverage
-8 tests covering: initialization, double-initialize rejection, successful
-flagging by a Responder, rejection of flagging by a Monitor, rejection of
-flagging by an unauthorized address, multiple flags accumulating correctly,
-the history cap dropping the oldest entry, and role lookup for unknown
-addresses.
+26 tests covering: initialization and double-initialize rejection; flagging
+by Responders and rejection for Monitors and unauthorized addresses; flag
+history accumulation and the 50-entry cap; role lookup and `revoke_agent`;
+the timelocked upgrade flow (propose, cancel, delay not elapsed, admin
+checks); and the pause switch (default state, blocked flagging, unpause,
+admin-only access, admin actions while paused).
 
 ## Build
 ```
