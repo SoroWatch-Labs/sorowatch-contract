@@ -1,7 +1,8 @@
 #![cfg(test)]
 use super::*;
-use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
 use soroban_sdk::BytesN;
+use soroban_sdk::IntoVal;
 
 fn setup(env: &Env) -> (Address, Address) {
     let contract_id = env.register(SoroWatch, ());
@@ -352,4 +353,116 @@ fn test_admin_actions_still_work_while_paused() {
     client.pause(&admin);
     client.revoke_agent(&admin, &agent);
     assert!(client.get_role(&agent).is_none());
+}
+
+#[test]
+fn test_admin_transfer_requires_acceptance() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&admin, &new_admin);
+    assert_eq!(client.get_pending_admin(), Some(new_admin.clone()));
+    // Nothing changes until the new admin accepts.
+    assert_eq!(client.get_admin(), admin);
+
+    client.accept_admin(&new_admin);
+    assert_eq!(client.get_admin(), new_admin);
+    assert!(client.get_pending_admin().is_none());
+}
+
+#[test]
+#[should_panic(expected = "unauthorized")]
+fn test_old_admin_loses_rights_after_transfer() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    let new_admin = Address::generate(&env);
+    client.propose_admin(&admin, &new_admin);
+    client.accept_admin(&new_admin);
+    client.pause(&admin);
+}
+
+#[test]
+fn test_new_admin_can_act_after_transfer() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    let new_admin = Address::generate(&env);
+    client.propose_admin(&admin, &new_admin);
+    client.accept_admin(&new_admin);
+    client.pause(&new_admin);
+    assert!(client.is_paused());
+}
+
+#[test]
+#[should_panic(expected = "not the pending admin")]
+fn test_wrong_address_cannot_accept() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    let new_admin = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    client.propose_admin(&admin, &new_admin);
+    client.accept_admin(&stranger);
+}
+
+#[test]
+#[should_panic(expected = "no pending admin")]
+fn test_accept_without_proposal_panics() {
+    let env = Env::default();
+    let (client, _admin) = init(&env);
+    let someone = Address::generate(&env);
+    client.accept_admin(&someone);
+}
+
+#[test]
+#[should_panic(expected = "unauthorized")]
+fn test_non_admin_cannot_propose_admin() {
+    let env = Env::default();
+    let (client, _admin) = init(&env);
+    let attacker = Address::generate(&env);
+    client.propose_admin(&attacker, &attacker);
+}
+
+#[test]
+fn test_cancel_admin_transfer_clears_pending() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    let new_admin = Address::generate(&env);
+    client.propose_admin(&admin, &new_admin);
+    client.cancel_admin_transfer(&admin);
+    assert!(client.get_pending_admin().is_none());
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+#[should_panic(expected = "no pending admin")]
+fn test_cancel_without_proposal_panics_admin() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    client.cancel_admin_transfer(&admin);
+}
+
+#[test]
+fn test_proposing_again_replaces_pending_admin() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    client.propose_admin(&admin, &first);
+    client.propose_admin(&admin, &second);
+    assert_eq!(client.get_pending_admin(), Some(second));
+}
+
+#[test]
+fn test_admin_transfer_emits_events() {
+    let env = Env::default();
+    let (client, admin) = init(&env);
+    let new_admin = Address::generate(&env);
+
+    client.propose_admin(&admin, &new_admin);
+    let (_, topics, _) = env.events().all().last().unwrap();
+    assert_eq!(topics, (symbol_short!("adm_prop"),).into_val(&env));
+
+    client.accept_admin(&new_admin);
+    let (_, topics, _) = env.events().all().last().unwrap();
+    assert_eq!(topics, (symbol_short!("adm_xfer"),).into_val(&env));
 }
