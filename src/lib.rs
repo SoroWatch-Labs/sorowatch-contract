@@ -33,6 +33,7 @@ pub enum DataKey {
     Flags(Address),
     PendingUpgrade,
     Paused,
+    PendingAdmin,
 }
 
 const FLAG_EVENT: Symbol = symbol_short!("flagged");
@@ -131,6 +132,57 @@ impl SoroWatch {
         env.storage().instance().remove(&DataKey::PendingUpgrade);
         env.deployer()
             .update_current_contract_wasm(pending.wasm_hash);
+    }
+
+    /// Admin-only: start handing over the admin role. Nothing changes until
+    /// `new_admin` calls `accept_admin`, so a typo in the address cannot lock
+    /// the contract out. Proposing again replaces the earlier proposal.
+    pub fn propose_admin(env: Env, admin: Address, new_admin: Address) {
+        Self::require_admin(&env, &admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
+        env.events()
+            .publish((symbol_short!("adm_prop"),), new_admin);
+    }
+
+    /// Called by the proposed admin to take over. The previous admin loses
+    /// the role immediately.
+    pub fn accept_admin(env: Env, new_admin: Address) {
+        new_admin.require_auth();
+        let pending: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .expect("no pending admin");
+        if pending != new_admin {
+            panic!("not the pending admin");
+        }
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+        env.events()
+            .publish((symbol_short!("adm_xfer"),), new_admin);
+    }
+
+    /// Admin-only: cancel a pending admin transfer.
+    pub fn cancel_admin_transfer(env: Env, admin: Address) {
+        Self::require_admin(&env, &admin);
+        if !env.storage().instance().has(&DataKey::PendingAdmin) {
+            panic!("no pending admin");
+        }
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+        env.events().publish((symbol_short!("adm_canc"),), ());
+    }
+
+    pub fn get_pending_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::PendingAdmin)
+    }
+
+    pub fn get_admin(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized")
     }
 
     /// Admin-only: pause flagging, e.g. while investigating a faulty agent.
