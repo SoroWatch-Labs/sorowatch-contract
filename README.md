@@ -8,8 +8,10 @@ role-based agent authorization and persistent flag history.
 - `authorize_agent(admin, agent, role)` — assigns Monitor or Responder role
 - `revoke_agent(admin, agent)` — removes an agent's role and emits `revoked`
 - `get_role(agent)` — reads an agent's assigned role
-- `flag_anomaly(agent, subject, score)` — Responder-only; persists the flag
-  (capped at 50 per subject, oldest dropped) and emits a `flagged` event
+- `flag_anomaly(agent, subject, score)` — Responder-only; the score must be
+  0-100 (`MAX_SCORE`) or the call panics with "score out of range". Persists
+  the flag (capped at 50 per subject, oldest dropped) and emits a `flagged`
+  event
 - `get_flags(subject)` — returns the persisted flag history for an address
 - `get_threshold()` — reads the configured risk threshold
 - `pause(admin)` / `unpause(admin)` — admin-only switch that blocks
@@ -24,14 +26,15 @@ role-based agent authorization and persistent flag history.
   executing; `get_pending_upgrade()` shows what is queued
 
 ## Test coverage
-36 tests covering: initialization and double-initialize rejection; flagging
+41 tests covering: initialization and double-initialize rejection; flagging
 by Responders and rejection for Monitors and unauthorized addresses; flag
 history accumulation and the 50-entry cap; role lookup and `revoke_agent`;
 the timelocked upgrade flow (propose, cancel, delay not elapsed, admin
 checks); the pause switch (default state, blocked flagging, unpause,
-admin-only access, admin actions while paused); and the two-step admin
+admin-only access, admin actions while paused); the two-step admin
 transfer (acceptance required, wrong address rejected, old admin loses
-rights, cancel, re-propose, events).
+rights, cancel, re-propose, events); and score validation (boundaries 0 and
+100 accepted, anything above rejected with nothing stored).
 
 ## Build
 ```

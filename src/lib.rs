@@ -38,6 +38,8 @@ pub enum DataKey {
 
 const FLAG_EVENT: Symbol = symbol_short!("flagged");
 const MAX_FLAGS_PER_SUBJECT: u32 = 50;
+/// Highest risk score a flag may carry (scores are 0-100).
+pub const MAX_SCORE: u32 = 100;
 /// Ledgers that must pass between proposing and executing an upgrade (~1 day).
 pub const UPGRADE_DELAY_LEDGERS: u32 = 17_280;
 
@@ -216,6 +218,7 @@ impl SoroWatch {
     }
 
     /// Called by an authorized Responder agent to flag a subject address.
+    /// The score must be 0-100 (MAX_SCORE); anything higher is rejected.
     /// Persists the flag (capped at MAX_FLAGS_PER_SUBJECT, oldest dropped)
     /// and emits an event for off-chain services to consume.
     pub fn flag_anomaly(env: Env, agent: Address, subject: Address, score: u32) {
@@ -227,6 +230,9 @@ impl SoroWatch {
         match role {
             Some(Role::Responder) => {}
             _ => panic!("caller is not an authorized responder"),
+        }
+        if score > MAX_SCORE {
+            panic!("score out of range");
         }
 
         let mut flags: Vec<Flag> = env
