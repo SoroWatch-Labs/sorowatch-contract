@@ -466,3 +466,53 @@ fn test_admin_transfer_emits_events() {
     let (_, topics, _) = env.events().all().last().unwrap();
     assert_eq!(topics, (symbol_short!("adm_xfer"),).into_val(&env));
 }
+
+#[test]
+fn test_flag_accepts_score_boundaries() {
+    let env = Env::default();
+    let (client, _admin, agent) = init_with_responder(&env);
+    let subject = Address::generate(&env);
+    client.flag_anomaly(&agent, &subject, &0);
+    client.flag_anomaly(&agent, &subject, &MAX_SCORE);
+    let flags = client.get_flags(&subject);
+    assert_eq!(flags.len(), 2);
+    assert_eq!(flags.get(1).unwrap().score, MAX_SCORE);
+}
+
+#[test]
+#[should_panic(expected = "score out of range")]
+fn test_flag_rejects_score_above_max() {
+    let env = Env::default();
+    let (client, _admin, agent) = init_with_responder(&env);
+    let subject = Address::generate(&env);
+    client.flag_anomaly(&agent, &subject, &(MAX_SCORE + 1));
+}
+
+#[test]
+#[should_panic(expected = "score out of range")]
+fn test_flag_rejects_huge_score() {
+    let env = Env::default();
+    let (client, _admin, agent) = init_with_responder(&env);
+    let subject = Address::generate(&env);
+    client.flag_anomaly(&agent, &subject, &u32::MAX);
+}
+
+#[test]
+fn test_rejected_score_stores_no_flag() {
+    let env = Env::default();
+    let (client, _admin, agent) = init_with_responder(&env);
+    let subject = Address::generate(&env);
+    let result = client.try_flag_anomaly(&agent, &subject, &101);
+    assert!(result.is_err());
+    assert_eq!(client.get_flags(&subject).len(), 0);
+}
+
+#[test]
+#[should_panic(expected = "caller is not an authorized responder")]
+fn test_unauthorized_caller_is_rejected_before_score_check() {
+    let env = Env::default();
+    let (client, _admin) = init(&env);
+    let stranger = Address::generate(&env);
+    let subject = Address::generate(&env);
+    client.flag_anomaly(&stranger, &subject, &500);
+}
